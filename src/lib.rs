@@ -401,7 +401,7 @@ impl ToJsonString for Device {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SentryCredential {
     pub key: String,
-    pub secret: String,
+    pub secret: Option<String>,
     pub host: String,
     pub project_id: String,
 }
@@ -429,9 +429,9 @@ impl FromStr for SentryCredential {
                 let username = url.username().to_string();
                 if !username.is_empty() { Some((url, username)) } else { None }
             })
-            .and_then(|(url, username)| {
+            .map(|(url, username)| {
                 let password = url.password().map(str::to_string);
-                password.map(|pw| (url, username, pw))
+                (url, username, password)
             })
             .and_then(|(url, username, pw)| {
                 let host = url.host_str().map(str::to_string);
@@ -524,15 +524,19 @@ impl Sentry {
         // sentry_secret=<secret api key>
         //
         let timestamp = time::get_time().sec.to_string();
-        let xsentryauth = format!("Sentry sentry_version=7,sentry_client=rust-sentry/{},\
-                                   sentry_timestamp={},sentry_key={},sentry_secret={}",
-                                  env!("CARGO_PKG_VERSION"),
-                                  timestamp,
-                                  credential.key,
-                                  credential.secret);
+        let xsentryauth = credential.secret.as_ref().map(|secret| format!(
+            "Sentry sentry_version=7,sentry_client=rust-sentry/{},sentry_timestamp={},sentry_key={},sentry_secret={}",
+            env!("CARGO_PKG_VERSION"),
+            timestamp,
+            credential.key,
+            secret
+        )).unwrap_or_else(|| format!(
+            "Sentry sentry_version=7,sentry_client=rust-sentry/{},sentry_timestamp={},sentry_key={}",
+            env!("CARGO_PKG_VERSION"),
+            timestamp,
+            credential.key,
+        ));
         headers.set(XSentryAuth(xsentryauth));
-
-
         headers.set(ContentType::json());
 
         let body = e.to_json_string();
@@ -545,11 +549,7 @@ impl Sentry {
         client.set_write_timeout(Some(Duration::new(5, 0)));
 
         // {PROTOCOL}://{PUBLIC_KEY}:{SECRET_KEY}@{HOST}/{PATH}{PROJECT_ID}/store/
-        let url = format!("https://{}:{}@{}/api/{}/store/",
-                          credential.key,
-                          credential.secret,
-                          credential.host,
-                          credential.project_id);
+        let url = format!("https://{}/api/{}/store/", credential.host, credential.project_id);
 
         let mut res = client.post(&url)
             .headers(headers)
@@ -768,7 +768,7 @@ mod tests {
                                  "test_env".to_string(),
                                  SentryCredential {
                                      key: "xx".to_string(),
-                                     secret: "xx".to_string(),
+                                     secret: Some("xx".to_string()),
                                      host: "app.getsentry.com".to_string(),
                                      project_id: "xx".to_string(),
                                  });
@@ -802,7 +802,7 @@ mod tests {
                                           "test_env".to_string(),
                                           SentryCredential {
                                               key: "xx".to_string(),
-                                              secret: "xx".to_string(),
+                                              secret: Some("xx".to_string()),
                                               host: "app.getsentry.com".to_string(),
                                               project_id: "xx".to_string(),
                                           }));
@@ -824,7 +824,7 @@ mod tests {
         let parsed_creds: SentryCredential = "https://mypublickey:myprivatekey@myhost/myprojectid".parse().unwrap();
         let manual_creds = SentryCredential {
             key: "mypublickey".to_string(),
-            secret: "myprivatekey".to_string(),
+            secret: Some("myprivatekey".to_string()),
             host: "myhost".to_string(),
             project_id: "myprojectid".to_string()
         };
@@ -836,7 +836,7 @@ mod tests {
         let parsed_creds: SentryCredential = "https://mypublickey:myprivatekey@myhost/foo/bar/myprojectid".parse().unwrap();
         let manual_creds = SentryCredential {
             key: "mypublickey".to_string(),
-            secret: "myprivatekey".to_string(),
+            secret: Some("myprivatekey".to_string()),
             host: "myhost".to_string(),
             project_id: "myprojectid".to_string()
         };
@@ -851,8 +851,14 @@ mod tests {
 
     #[test]
     fn test_parsing_dsn_when_lacking_private_key() {
-        let parsed_creds = "https://mypublickey@myhost/myprojectid".parse::<SentryCredential>();
-        assert!(parsed_creds.is_err());
+        let parsed_creds = "https://mypublickey@myhost/myprojectid".parse::<SentryCredential>().unwrap();
+        let manual_creds = SentryCredential {
+            key: "mypublickey".to_string(),
+            secret: None,
+            host: "myhost".to_string(),
+            project_id: "myprojectid".to_string()
+        };
+        assert_eq!(parsed_creds, manual_creds);
     }
 
     #[test]
