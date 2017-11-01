@@ -10,7 +10,7 @@ extern crate futures;
 extern crate tokio_core;
 #[macro_use]
 extern crate hyper;
-extern crate hyper_tls;
+extern crate hyper_rustls;
 
 extern crate serde;
 extern crate serde_json;
@@ -422,7 +422,7 @@ fn post(handle: &Handle, cred: &SentryCredential, e: Event) -> Result<()> {
     if cred.scheme == "https" {
         // https
         let client = hyper::Client::configure()
-            .connector(hyper_tls::HttpsConnector::new(4, handle).unwrap())
+            .connector(hyper_rustls::HttpsConnector::new(4, handle))
             .build(handle);
         post_client(client, handle.clone(), cred, e)
     } else {
